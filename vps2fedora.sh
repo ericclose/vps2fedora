@@ -704,11 +704,6 @@ prepare_target_scripts() {
 
 		# 1. Configure Root Password & SSH
 		echo "--> Configuring SSH and root authentication..."
-		mkdir -p /etc/ssh/sshd_config.d
-		cat > /etc/ssh/sshd_config.d/01-permitrootlogin.conf <<-SSHEOF
-			PermitRootLogin yes
-			PasswordAuthentication yes
-		SSHEOF
 
 		# Ensure privilege separation directories exist with correct permissions
 		mkdir -p -m 0755 /var/empty/sshd /usr/share/empty.sshd /run/sshd
@@ -1108,9 +1103,12 @@ cleanup_and_finalize() {
 	printf "  DNS:       %s\n" "$NET_DNS4"
 	printf "\n"
 	printf "Login Information:\n"
-	printf "  Port:      22 (SSH)\n"
 	printf "  User:      root\n"
 	printf "  Password:  %s\n" "$ROOT_PASSWORD"
+	printf "  SSH Note:  Fedora disables root password login over SSH by default.\n"
+	printf "             Log in via VNC/Console first, then either add your SSH key to\n"
+	printf "             ~/.ssh/authorized_keys or enable root SSH login:\n"
+	printf "             sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && systemctl restart sshd\n"
 	printf "\n"
 	printf "To complete the conversion, reboot the system immediately:\n"
 	printf "\033[1;33m  sync ; reboot -f\033[0m\n"
