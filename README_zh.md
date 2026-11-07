@@ -16,7 +16,7 @@
 
 ```bash
 # 下载脚本
-curl -fsSL -O https://cdn.jsdelivr.net/gh/ericclose/vps2fedora@main/vps2fedora.sh
+curl -fsSL -O https://github.com/ericclose/vps2fedora/raw/refs/heads/main/vps2fedora.sh
 chmod +x vps2fedora.sh
 
 # 运行脚本（默认转化为 Fedora 44）
@@ -42,13 +42,13 @@ sync ; reboot -f
 
 ### 3. 重新连接 VPS
 
-等待 1～3 分钟后，使用 SSH 重新连接：
+等待 1～3 分钟后，使用默认创建的 `wheel` 管理员用户 `admin` 通过 SSH 重新连接（Fedora 默认禁止 `root` 直接使用密码通过 SSH 登录）：
 
 ```bash
-ssh root@<你的VPS-IP>
+ssh admin@<你的VPS-IP>
 ```
 
-- **Root 密码**：默认设置为 `vps2fedora`（或通过 `-p <password>` 指定自定义密码），不保留原系统的任何旧配置或文件。
+- **默认密码**：`admin`（具备 `sudo` 权限）与 `root` 的密码默认均设置为 `vps2fedora`（或通过 `-p <password>` 指定自定义密码），登录后可执行 `sudo -i` 切换至 `root`，不保留原系统的任何旧配置或文件。
 
 ---
 
@@ -60,7 +60,8 @@ Usage: vps2fedora.sh [options]
 Options:
   -v <version>       Fedora 版本号 (默认: 44)
   -m <mirror>        OCI 容器镜像源地址 (默认: https://registry.fedoraproject.org)
-  -p <password>      指定 Root 密码 (默认: vps2fedora)
+  -u <user>          创建的普通管理员用户名 (默认: admin)
+  -p <password>      指定 root 与管理员用户的密码 (默认: vps2fedora)
   -n <network>       网络管理组件: NetworkManager 或 systemd-networkd (默认: NetworkManager)
   -d <disk>          指定 BIOS 引导安装的磁盘设备 (如 /dev/vda, /dev/sda, 默认自动识别)
   -k <kernel>        安装的内核包名称 (默认: kernel)

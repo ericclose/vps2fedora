@@ -18,6 +18,7 @@ FEDORA_VERSION="44"
 REGISTRY_MIRROR="https://registry.fedoraproject.org"
 BOOTSTRAP_DIR="/fedora_bootstrap"
 NETWORK_BACKEND="NetworkManager"
+ADMIN_USER="admin"
 ROOT_PASSWORD="vps2fedora"
 OPT_BOOT_DISK=""
 OPT_KERNEL="kernel"
@@ -39,7 +40,8 @@ show_help() {
 		Options:
 		  -v <version>       Fedora version (Default: 44)
 		  -m <mirror>        OCI registry mirror (Default: https://registry.fedoraproject.org)
-		  -p <password>      Root password to set (Default: vps2fedora)
+		  -u <user>          Sudo regular user to create (Default: admin)
+		  -p <password>      Password for root and sudo user (Default: vps2fedora)
 		  -n <network>       Networking system: NetworkManager or systemd-networkd (Default: NetworkManager)
 		  -d <disk>          Force bootloader target disk (e.g., /dev/vda, /dev/sda)
 		  -k <kernel>        Kernel package to install (Default: kernel)
@@ -54,10 +56,11 @@ show_help() {
 }
 
 # Parse options
-while getopts "v:m:p:n:d:k:ryth" opt; do
+while getopts "v:m:u:p:n:d:k:ryth" opt; do
 	case "$opt" in
 	v) FEDORA_VERSION="$OPTARG" ;;
 	m) REGISTRY_MIRROR=$(printf '%s' "$OPTARG" | sed 's:/*$::') ;;
+	u) ADMIN_USER="$OPTARG" ;;
 	p) ROOT_PASSWORD="$OPTARG" ;;
 	n)
 		if [ "$OPTARG" != "NetworkManager" ] && [ "$OPTARG" != "systemd-networkd" ]; then
@@ -694,7 +697,9 @@ prepare_target_scripts() {
 		ROOT_DEV="$ROOT_DEV"
 		ROOT_FSTYPE="$ROOT_FSTYPE"
 		ROOT_UUID="$ROOT_UUID"
+		ADMIN_USER="$ADMIN_USER"
 		ROOT_PASSWORD="$ROOT_PASSWORD"
+		FEDORA_VERSION="$FEDORA_VERSION"
 	EOF
 
 	cat > "$BOOTSTRAP_DIR/setup_target.sh" <<-'EOF'
@@ -702,8 +707,8 @@ prepare_target_scripts() {
 		set -e
 		. /tmp/vps_config.env
 
-		# 1. Configure Root Password & SSH
-		echo "--> Configuring SSH and root authentication..."
+		# 1. Configure Root Password, Sudo User & SSH
+		echo "--> Configuring SSH and user authentication..."
 
 		# Ensure privilege separation directories exist with correct permissions
 		mkdir -p -m 0755 /var/empty/sshd /usr/share/empty.sshd /run/sshd
@@ -723,6 +728,10 @@ prepare_target_scripts() {
 		fi
 
 		echo "root:$ROOT_PASSWORD" | chpasswd
+		if [ -n "$ADMIN_USER" ] && [ "$ADMIN_USER" != "root" ]; then
+			id "$ADMIN_USER" >/dev/null 2>&1 || useradd -m -G wheel -s /bin/bash "$ADMIN_USER"
+			echo "$ADMIN_USER:$ROOT_PASSWORD" | chpasswd
+		fi
 		systemctl enable sshd.service || true
 
 		# 2. Configure Hostname
@@ -909,6 +918,16 @@ prepare_target_scripts() {
 			SELINUXTYPE=targeted
 		SELEOF
 
+		# Fix Fedora 45+ kmscon SELinux denial on QEMU/KVM virtual DRM devices (e.g. cirrus card0 / xserver_misc_device_t)
+		if { [ "${FEDORA_VERSION:-0}" -ge 45 ] 2>/dev/null || [ "$FEDORA_VERSION" = "rawhide" ]; } && command -v semodule >/dev/null 2>&1; then
+			cat > /tmp/kmscon_vps.cil <<-'CILEOF'
+				(typepermissive kmscon_t)
+				(allow kmscon_t xserver_misc_device_t (chr_file (getattr open read write ioctl lock append map)))
+			CILEOF
+			semodule -N -i /tmp/kmscon_vps.cil 2>/dev/null || semodule -i /tmp/kmscon_vps.cil 2>/dev/null || true
+			rm -f /tmp/kmscon_vps.cil
+		fi
+
 		# Create one-shot firstboot auto-enforce script
 		mkdir -p /usr/local/sbin /etc/systemd/system
 		cat > /usr/local/sbin/selinux-firstboot-enforce.sh <<-'FIRSTBOOT_SH'
@@ -930,7 +949,7 @@ prepare_target_scripts() {
 			if command -v restorecon >/dev/null 2>&1; then
 				echo "[SELinux Firstboot] Labeling root inode, symlinks, and config files..."
 				restorecon -F / /bin /sbin /lib /lib64 /usr /boot /home /opt /tmp /var /etc /root /run 2>/dev/null || true
-				restorecon -RF /etc /var /root /run /boot 2>/dev/null || true
+				restorecon -RF /etc /var /root /home /run /boot /dev 2>/dev/null || true
 			fi
 
 			# 4. Switch live kernel to Enforcing mode as the final step
@@ -1103,12 +1122,14 @@ cleanup_and_finalize() {
 	printf "  DNS:       %s\n" "$NET_DNS4"
 	printf "\n"
 	printf "Login Information:\n"
-	printf "  User:      root\n"
-	printf "  Password:  %s\n" "$ROOT_PASSWORD"
-	printf "  SSH Note:  Fedora disables root password login over SSH by default.\n"
-	printf "             Log in via VNC/Console first, then either add your SSH key to\n"
-	printf "             ~/.ssh/authorized_keys or enable root SSH login:\n"
-	printf "             sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && systemctl restart sshd\n"
+	printf "  Port:       22 (SSH)\n"
+	printf "  SSH User:   %s (wheel/sudo group, direct SSH password login enabled)\n" "$ADMIN_USER"
+	printf "  Root User:  root (VNC/Console or via 'sudo -i' after SSH login as %s)\n" "$ADMIN_USER"
+	printf "  Password:   %s (shared by both %s and root)\n" "$ROOT_PASSWORD" "$ADMIN_USER"
+	printf "  SSH Note:   Fedora disables root password login over SSH by default.\n"
+	printf "              Connect via: ssh %s@<VPS_IP> (then run 'sudo -i' for root),\n" "$ADMIN_USER"
+	printf "              or enable root SSH login in /etc/ssh/sshd_config if desired:\n"
+	printf "              sudo sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && sudo systemctl restart sshd\n"
 	printf "\n"
 	printf "To complete the conversion, reboot the system immediately:\n"
 	printf "\033[1;33m  sync ; reboot -f\033[0m\n"

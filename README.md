@@ -16,7 +16,7 @@ English | [中文文档](README_zh.md)
 
 ```bash
 # Download the script
-curl -fsSL -O https://cdn.jsdelivr.net/gh/ericclose/vps2fedora@main/vps2fedora.sh
+curl -fsSL -O https://github.com/ericclose/vps2fedora/raw/refs/heads/main/vps2fedora.sh
 chmod +x vps2fedora.sh
 
 # Run the re-imaging process (defaults to Fedora 44)
@@ -41,13 +41,13 @@ sync ; reboot -f
 
 ### 3. Reconnect via SSH
 
-After 1 to 3 minutes, connect to the VPS:
+After 1 to 3 minutes, connect to the VPS using the sudo user (`admin` by default, as Fedora disables direct `root` password login over SSH by default):
 
 ```bash
-ssh root@<your-vps-ip>
+ssh admin@<your-vps-ip>
 ```
 
-- **Root Password**: Set to `vps2fedora` by default (or customized via `-p <password>`). No old configuration files or credentials from the previous system are retained.
+- **Default Credentials**: Both `admin` (in the `wheel`/sudo group) and `root` share the password `vps2fedora` by default (or customized via `-p <password>`). Run `sudo -i` after logging in to switch to `root`. No old configuration files or credentials from the previous system are retained.
 
 ---
 
@@ -59,7 +59,8 @@ Usage: vps2fedora.sh [options]
 Options:
   -v <version>       Fedora version to install (Default: 44)
   -m <mirror>        OCI registry mirror (Default: https://registry.fedoraproject.org)
-  -p <password>      Root password to set (Default: vps2fedora)
+  -u <user>          Sudo regular user to create (Default: admin)
+  -p <password>      Password for root and sudo user (Default: vps2fedora)
   -n <network>       Network stack: NetworkManager or systemd-networkd (Default: NetworkManager)
   -d <disk>          Force bootloader target disk (e.g., /dev/vda, /dev/sda)
   -k <kernel>        Kernel package to install (Default: kernel)
