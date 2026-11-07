@@ -191,6 +191,24 @@ download_stream() {
 	fi
 }
 
+run_cmd_timeout() {
+	sec="$1"
+	shift
+	if command -v timeout >/dev/null 2>&1; then
+		timeout "$sec" "$@"
+	else
+		"$@"
+	fi
+}
+
+has_active_nm() {
+	command -v nmcli >/dev/null 2>&1 || return 1
+	if command -v systemctl >/dev/null 2>&1; then
+		systemctl is-active --quiet NetworkManager 2>/dev/null && return 0
+	fi
+	[ -e /run/NetworkManager/NetworkManager.pid ] || [ -e /var/run/NetworkManager/NetworkManager.pid ]
+}
+
 # --- Step 2: Network Information Gathering via ip addr & ip route ---
 gather_network_info() {
 	log_info "Gathering network configuration via 'ip addr' and 'ip route'..."
@@ -213,12 +231,12 @@ gather_network_info() {
 		# Fallback: extract interface from kernel default route (destination 00000000)
 		NET_DEV=$(awk '$2=="00000000" {print $1; exit}' /proc/net/route 2>/dev/null || true)
 	fi
-	if [ -z "$NET_DEV" ] && command -v nmcli >/dev/null 2>&1; then
-		NET_DEV=$(nmcli -t -f DEVICE,TYPE,STATE dev 2>/dev/null | awk -F: '$2=="ethernet" && $3=="connected" {print $1; exit}')
-		[ -z "$NET_DEV" ] && NET_DEV=$(nmcli -g GENERAL.DEVICE dev show 2>/dev/null | head -n 1)
+	if [ -z "$NET_DEV" ] && has_active_nm; then
+		NET_DEV=$(run_cmd_timeout 3 nmcli -t -f DEVICE,TYPE,STATE dev 2>/dev/null | awk -F: '$2=="ethernet" && $3=="connected" {print $1; exit}' || true)
+		[ -z "$NET_DEV" ] && NET_DEV=$(run_cmd_timeout 3 nmcli -g GENERAL.DEVICE dev show 2>/dev/null | head -n 1 || true)
 	fi
 	if [ -z "$NET_DEV" ] && command -v networkctl >/dev/null 2>&1; then
-		NET_DEV=$(networkctl list --no-legend 2>/dev/null | awk '$3 ~ /routable|carrier/ {print $2; exit}')
+		NET_DEV=$(run_cmd_timeout 3 networkctl list --no-legend 2>/dev/null | awk '$3 ~ /routable|carrier/ {print $2; exit}' || true)
 	fi
 	if [ -z "$NET_DEV" ] && [ -d /sys/class/net ]; then
 		for d in /sys/class/net/*; do
@@ -250,19 +268,19 @@ gather_network_info() {
 	# 2. Hardware MAC address (for persistent matching)
 	NET_MAC=""
 	if [ -f "/sys/class/net/$NET_DEV/address" ]; then
-		NET_MAC=$(cat "/sys/class/net/$NET_DEV/address" 2>/dev/null)
+		NET_MAC=$(cat "/sys/class/net/$NET_DEV/address" 2>/dev/null || true)
 	fi
 	if [ -z "$NET_MAC" ]; then
-		NET_MAC=$(ip link show dev "$NET_DEV" 2>/dev/null | awk '/link\/ether/ {print $2; exit}')
+		NET_MAC=$(ip link show dev "$NET_DEV" 2>/dev/null | awk '/link\/ether/ {print $2; exit}' || true)
 	fi
-	if [ -z "$NET_MAC" ] && command -v nmcli >/dev/null 2>&1; then
-		NET_MAC=$(nmcli -g GENERAL.HWADDR dev show "$NET_DEV" 2>/dev/null | head -n 1)
+	if [ -z "$NET_MAC" ] && has_active_nm; then
+		NET_MAC=$(run_cmd_timeout 3 nmcli -g GENERAL.HWADDR dev show "$NET_DEV" 2>/dev/null | head -n 1 || true)
 	fi
 
 	# 3. IPv4 Gateway via ip -4 route (with fallbacks)
-	NET_GW4=$(ip -4 route show default dev "$NET_DEV" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="via") {print $(i+1); exit}}')
+	NET_GW4=$(ip -4 route show default dev "$NET_DEV" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="via") {print $(i+1); exit}}' || true)
 	if [ -z "$NET_GW4" ]; then
-		NET_GW4=$(ip -4 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="via") {print $(i+1); exit}}')
+		NET_GW4=$(ip -4 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="via") {print $(i+1); exit}}' || true)
 	fi
 	if [ -z "$NET_GW4" ] && [ -f /proc/net/route ]; then
 		NET_GW4=$(awk -v dev="$NET_DEV" '$2 == "00000000" && ($1 == dev || !found) {
@@ -276,36 +294,36 @@ gather_network_info() {
 			exit;
 		}' /proc/net/route 2>/dev/null || true)
 	fi
-	if [ -z "$NET_GW4" ] && command -v nmcli >/dev/null 2>&1; then
-		NET_GW4=$(nmcli -g IP4.GATEWAY dev show "$NET_DEV" 2>/dev/null | head -n 1)
+	if [ -z "$NET_GW4" ] && has_active_nm; then
+		NET_GW4=$(run_cmd_timeout 3 nmcli -g IP4.GATEWAY dev show "$NET_DEV" 2>/dev/null | head -n 1 || true)
 	fi
 	if [ -z "$NET_GW4" ] && command -v route >/dev/null 2>&1; then
-		NET_GW4=$(route -n 2>/dev/null | awk '$1=="0.0.0.0" {print $2; exit}')
+		NET_GW4=$(route -n 2>/dev/null | awk '$1=="0.0.0.0" {print $2; exit}' || true)
 	fi
 
 	# 4. IPv4 Addresses with CIDR prefix via ip -4 addr
-	NET_IP4_LIST=$(ip -4 -o addr show dev "$NET_DEV" scope global 2>/dev/null | awk '{print $4}')
+	NET_IP4_LIST=$(ip -4 -o addr show dev "$NET_DEV" scope global 2>/dev/null | awk '{print $4}' || true)
 	if [ -z "$NET_IP4_LIST" ]; then
-		NET_IP4_LIST=$(ip addr show dev "$NET_DEV" 2>/dev/null | awk '$1=="inet" {print $2}')
+		NET_IP4_LIST=$(ip addr show dev "$NET_DEV" 2>/dev/null | awk '$1=="inet" {print $2}' || true)
 	fi
-	if [ -z "$NET_IP4_LIST" ] && command -v nmcli >/dev/null 2>&1; then
-		NET_IP4_LIST=$(nmcli -g IP4.ADDRESS dev show "$NET_DEV" 2>/dev/null)
+	if [ -z "$NET_IP4_LIST" ] && has_active_nm; then
+		NET_IP4_LIST=$(run_cmd_timeout 3 nmcli -g IP4.ADDRESS dev show "$NET_DEV" 2>/dev/null || true)
 	fi
 	if [ -z "$NET_IP4_LIST" ] && [ -d /etc/NetworkManager/system-connections ]; then
-		addr_line=$(grep -h -s '^address1=' /etc/NetworkManager/system-connections/* 2>/dev/null | head -n 1)
+		addr_line=$(grep -h -s '^address1=' /etc/NetworkManager/system-connections/* 2>/dev/null | head -n 1 || true)
 		if [ -n "$addr_line" ]; then
-			ip_cidr=$(printf '%s' "$addr_line" | cut -d'=' -f2 | cut -d',' -f1)
+			ip_cidr=$(printf '%s' "$addr_line" | cut -d'=' -f2 | cut -d',' -f1 || true)
 			[ -n "$ip_cidr" ] && NET_IP4_LIST="$ip_cidr"
-			gw_cand=$(printf '%s' "$addr_line" | cut -d',' -f2)
+			gw_cand=$(printf '%s' "$addr_line" | cut -d',' -f2 || true)
 			[ -z "$NET_GW4" ] && [ -n "$gw_cand" ] && NET_GW4="$gw_cand"
 		fi
 	fi
 	if [ -z "$NET_IP4_LIST" ] && [ -f "/etc/sysconfig/network-scripts/ifcfg-$NET_DEV" ]; then
-		ip_cand=$(awk -F= '$1=="IPADDR" {gsub(/["'\'' ]/, "", $2); print $2}' "/etc/sysconfig/network-scripts/ifcfg-$NET_DEV" 2>/dev/null)
-		pfx_cand=$(awk -F= '$1=="PREFIX" {gsub(/["'\'' ]/, "", $2); print $2}' "/etc/sysconfig/network-scripts/ifcfg-$NET_DEV" 2>/dev/null)
+		ip_cand=$(awk -F= '$1=="IPADDR" {gsub(/["'\'' ]/, "", $2); print $2}' "/etc/sysconfig/network-scripts/ifcfg-$NET_DEV" 2>/dev/null || true)
+		pfx_cand=$(awk -F= '$1=="PREFIX" {gsub(/["'\'' ]/, "", $2); print $2}' "/etc/sysconfig/network-scripts/ifcfg-$NET_DEV" 2>/dev/null || true)
 		[ -z "$pfx_cand" ] && pfx_cand="24"
 		[ -n "$ip_cand" ] && NET_IP4_LIST="$ip_cand/$pfx_cand"
-		gw_cand=$(awk -F= '$1=="GATEWAY" {gsub(/["'\'' ]/, "", $2); print $2}' "/etc/sysconfig/network-scripts/ifcfg-$NET_DEV" 2>/dev/null)
+		gw_cand=$(awk -F= '$1=="GATEWAY" {gsub(/["'\'' ]/, "", $2); print $2}' "/etc/sysconfig/network-scripts/ifcfg-$NET_DEV" 2>/dev/null || true)
 		[ -z "$NET_GW4" ] && [ -n "$gw_cand" ] && NET_GW4="$gw_cand"
 	fi
 	if [ -z "$NET_IP4_LIST" ] && command -v ifconfig >/dev/null 2>&1; then
@@ -325,25 +343,22 @@ gather_network_info() {
 				else if (mask == "255.0.0.0") cidr = 8;
 				print ip "/" cidr;
 			}
-		')
+		' || true)
 	fi
 
 	# 5. IPv6 Gateway via ip -6 route
-	NET_GW6=$(ip -6 route show default dev "$NET_DEV" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="via") {print $(i+1); exit}}')
+	NET_GW6=$(ip -6 route show default dev "$NET_DEV" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="via") {print $(i+1); exit}}' || true)
 	if [ -z "$NET_GW6" ]; then
-		NET_GW6=$(ip -6 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="via") {print $(i+1); exit}}')
+		NET_GW6=$(ip -6 route show default 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="via") {print $(i+1); exit}}' || true)
 	fi
-	if [ -z "$NET_GW6" ] && command -v nmcli >/dev/null 2>&1; then
-		NET_GW6=$(nmcli -g IP6.GATEWAY dev show "$NET_DEV" 2>/dev/null | head -n 1)
+	if [ -z "$NET_GW6" ] && has_active_nm; then
+		NET_GW6=$(run_cmd_timeout 3 nmcli -g IP6.GATEWAY dev show "$NET_DEV" 2>/dev/null | head -n 1 || true)
 	fi
 
 	# 6. IPv6 Addresses with CIDR prefix via ip -6 addr
-	NET_IP6_LIST=$(ip -6 -o addr show dev "$NET_DEV" scope global 2>/dev/null | awk '{print $4}')
+	NET_IP6_LIST=$(ip -6 -o addr show dev "$NET_DEV" scope global 2>/dev/null | awk '{print $4}' || true)
 	if [ -z "$NET_IP6_LIST" ]; then
-		NET_IP6_LIST=$(ip addr show dev "$NET_DEV" 2>/dev/null | awk '$1=="inet6" && ($4=="global" || $0 ~ /scope global/) {print $2}')
-	fi
-	if [ -z "$NET_IP6_LIST" ] && command -v nmcli >/dev/null 2>&1; then
-		NET_IP6_LIST=$(nmcli -g IP6.ADDRESS dev show "$NET_DEV" 2>/dev/null)
+		NET_IP6_LIST=$(ip addr show dev "$NET_DEV" 2>/dev/null | awk '$1=="inet6" && ($4=="global" || $0 ~ /scope global/) {print $2}' || true)
 	fi
 	if [ -z "$NET_IP6_LIST" ] && [ -f /proc/net/if_inet6 ]; then
 		NET_IP6_LIST=$(awk -v dev="$NET_DEV" '$6 == dev && $4 == "00" {
@@ -356,6 +371,9 @@ gather_network_info() {
 			}
 			print ip6 "/" prefix;
 		}' /proc/net/if_inet6 2>/dev/null || true)
+	fi
+	if [ -z "$NET_IP6_LIST" ] && has_active_nm; then
+		NET_IP6_LIST=$(run_cmd_timeout 3 nmcli -g IP6.ADDRESS dev show "$NET_DEV" 2>/dev/null || true)
 	fi
 
 	# Clean and filter IPv6: remove nmcli escape slashes and ignore link-local (fe80::) or loopback
