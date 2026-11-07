@@ -945,10 +945,14 @@ prepare_target_scripts() {
 			rm -f /usr/local/sbin/selinux-firstboot-enforce.sh
 			systemctl daemon-reload 2>/dev/null || true
 
-			# 3. Restore contexts on root inode (/), top-level symlinks (/lib64, /bin, /sbin), and system dirs
+			# 3. Full system relabel via official fixfiles + restorecon on pseudo/runtime dirs
+			if command -v fixfiles >/dev/null 2>&1; then
+				echo "[SELinux Firstboot] Running official full filesystem relabel (fixfiles -F restore)..."
+				fixfiles -F restore >/dev/null 2>&1 || true
+			fi
 			if command -v restorecon >/dev/null 2>&1; then
-				echo "[SELinux Firstboot] Labeling root inode, symlinks, and config files..."
-				restorecon -F / /bin /sbin /lib /lib64 /usr /boot /home /opt /tmp /var /etc /root /run 2>/dev/null || true
+				echo "[SELinux Firstboot] Labeling root inode, symlinks, and runtime dirs..."
+				restorecon -F / /bin /sbin /lib /lib64 /usr /boot /home /opt /tmp /var /etc /root /run /dev 2>/dev/null || true
 				restorecon -RF /etc /var /root /home /run /boot /dev 2>/dev/null || true
 			fi
 
