@@ -32,10 +32,12 @@ sudo ./vps2fedora.sh -y -r
 
 Once the script completes, it displays a summary of the network configuration and credentials:
 
-```bash
-# Flush buffers and perform a hard reboot
-sync ; reboot -f
-```
+- **If running in a `root` shell**:
+  ```bash
+  # Flush buffers and perform a hard reboot
+  sync ; reboot -f
+  ```
+- **If running via a regular user (`sudo`)**: Wait a few seconds, then click **Reboot** in your VPS control panel (since the old system's `sudo` session and user database have been replaced, or pass `-r` when running the script to auto-reboot).
 
 *(If the `-r` option is specified, the script automatically reboots after a 5-second countdown).*
 

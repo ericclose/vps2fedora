@@ -1135,8 +1135,9 @@ cleanup_and_finalize() {
 	printf "              or enable root SSH login in /etc/ssh/sshd_config if desired:\n"
 	printf "              sudo sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && sudo systemctl restart sshd\n"
 	printf "\n"
-	printf "To complete the conversion, reboot the system immediately:\n"
-	printf "\033[1;33m  sync ; reboot -f\033[0m\n"
+	printf "To complete the conversion, reboot the system:\n"
+	printf "  - If running in a root shell:  \033[1;33msync ; reboot -f\033[0m\n"
+	printf "  - If running via a regular user (sudo): wait a few seconds, then click Reboot in your VPS control panel (or pass -r next time).\n"
 	printf "\n"
 
 	if [ $AUTO_REBOOT -eq 1 ]; then
