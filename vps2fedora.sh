@@ -734,6 +734,9 @@ prepare_target_scripts() {
 		fi
 		systemctl enable sshd.service || true
 
+		# Ensure firewalld uses 100% stock Fedora templates (/usr/lib/firewalld/zones/) by purging any local overrides
+		rm -rf /etc/firewalld/zones/* 2>/dev/null || true
+
 		# 2. Configure Hostname
 		echo "$NET_HOSTNAME" > /etc/hostname
 
